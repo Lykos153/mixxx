@@ -4,9 +4,18 @@ DJ202.tempoRange = [0.08, 0.16, 0.5]
 
 DJ202.init = function () {
 
+    DJ202.shiftButton = function (channel, control, value, status, group) {
+        DJ202.deck.concat(DJ202.effectUnit).forEach(
+            value
+                ? function (module) { module.shift(); }
+                : function (module) { module.unshift(); }
+        );
+    };
+
     DJ202.leftDeck = new DJ202.Deck([1,3], 0);
     DJ202.rightDeck = new DJ202.Deck([2,4], 1);
-    
+    DJ202.deck = [DJ202.leftDeck, DJ202.rightDeck];
+
     DJ202.effectUnit = [];
     DJ202.effectUnit[1] = new DJ202.EffectUnit(1);
     DJ202.effectUnit[2] = new DJ202.EffectUnit(2);
@@ -21,16 +30,22 @@ DJ202.shutdown = function () {
 };
 
 DJ202.browseEncoder = new components.Encoder({
-    midi: [0xBF, 0x00],
-    group: '[Playlist]',
-    inKey: 'SelectTrackKnob',
     input: function (channel, control, value, status, group) {
-        if (value === 1) {
-            this.inSetParameter(1);
-        } else if (value === 127) {
-            this.inSetParameter(-1);
+        var isShifted = control % 2 != 0;
+        switch (status) {
+        case 0xBF: // Rotate.
+            if (value === 1) {
+                script.triggerControl(group, isShifted ? 'ScrollUp' : 'MoveUp');
+            } else if (value === 127) {
+                script.triggerControl(group, isShifted ? 'ScrollDown' : 'MoveDown');
+            }
+            break;
+        case 0x9F: // Push.
+            if (value) {
+                script.triggerControl(group, isShifted ? 'MoveFocusBackward' : 'MoveFocusForward');
+            }
         }
-    },
+    }
 });
 
 DJ202.crossfader = new components.Pot({
@@ -43,14 +58,6 @@ DJ202.Deck = function (deckNumbers, offset) {
     components.Deck.call(this, deckNumbers);
     channel = offset+1;
 
-    this.shiftButton = function (channel, control, value, status, group) {
-        if (value === 127) {
-            this.shift();
-        } else {
-            this.unshift();
-        }
-    };
-
     this.loadTrack = new components.Button({
         midi: [0x9F, 0x02 + offset],
         unshift: function () {
@@ -61,6 +68,34 @@ DJ202.Deck = function (deckNumbers, offset) {
         },
     });
 
+    this.paramUp = function (channel, control, value, status, group) {
+        if (value) {
+            this.paramUp.active = true;
+            if (this.paramDown.active) {
+                script.triggerControl(group, 'reset_key');
+            } else if (this.keylock.is_held) {
+                var adjust = engine.getValue(group, 'pitch_adjust');
+                engine.setValue(group, 'pitch_adjust', Math.min(7, adjust + 1));
+            }
+        } else {
+            this.paramUp.active = false;
+        }
+    };
+
+    this.paramDown = function (channel, control, value, status, group) {
+        if (value) {
+            this.paramDown.active = true;
+            if (this.paramUp.active) {
+                script.triggerControl(group, 'reset_key');
+            } else if (this.keylock.is_held) {
+                var adjust = engine.getValue(group, 'pitch_adjust');
+                engine.setValue(group, 'pitch_adjust', Math.max(-7, adjust - 1));
+            }
+        } else {
+            this.paramDown.active = false;
+        }
+    };
+
     this.keylock = new components.Button({
         midi: [0x90 + offset, 0x0D],
         shiftOffset: 1,
@@ -69,9 +104,25 @@ DJ202.Deck = function (deckNumbers, offset) {
         outKey: 'keylock',
         currentRangeIndex: 0,
         unshift: function () {
-            this.type = components.Button.prototype.types.toggle;
-            this.input = components.Button.prototype.input;
+            this.input = function (channel, control, value, status, group) {
+                if (value) {
+                    this.longPressTimer = engine.beginTimer(this.longPressTimeout, function () {
+                        this.is_held = true;
+                    }, true);
+                } else {
+                    if (!this.is_held) {
+                        script.toggleControl(this.group, this.outKey);
+                    };
+                    engine.stopTimer(this.longPressTimer);
+                    this.is_held = false;
+                }
+            };
             this.inKey = 'keylock';
+            this.outKey = 'keylock';
+            // The DJ-202 disables the keylock LED when the button is pressed
+            // shifted. Restore the LED when shift is released.
+            this.send(this.outGetValue());
+            midi.sendShortMsg(0x84, 0x00, 0x3);
         },
         shift: function () {
             this.inKey = 'rateRange';
@@ -98,7 +149,7 @@ DJ202.Deck = function (deckNumbers, offset) {
     
     // ============================= JOG WHEELS =================================
     this.wheelTouch = function (channel, control, value, status, group) {
-      if (value === 0x7F) {
+      if (value === 0x7F && !this.isShifted) {
             var alpha = 1.0/8;
             var beta = alpha/32;
             engine.scratchEnable(script.deckFromGroup(this.currentDeck), 512, 45, alpha, beta);
@@ -109,8 +160,14 @@ DJ202.Deck = function (deckNumbers, offset) {
     
     this.wheelTurn = function (channel, control, value, status, group) {
         var newValue = value - 64;
-        if (engine.isScratching(1)) {
-            engine.scratchTick(script.deckFromGroup(this.currentDeck), newValue); // Scratch!
+        var deck = script.deckFromGroup(this.currentDeck);
+        if (engine.isScratching(deck)) {
+            engine.scratchTick(deck, newValue); // Scratch!
+        } else if (this.isShifted) {
+            // Strip search.
+            var oldPos = engine.getValue(this.currentDeck, 'playposition');
+            var newPos = Math.max(0, oldPos + newValue / 0xff);
+            engine.setValue(this.currentDeck, 'playposition', newPos);
         } else {
             engine.setValue(this.currentDeck, 'jog', newValue); // Pitch bend
         }
@@ -170,7 +227,60 @@ DJ202.Deck = function (deckNumbers, offset) {
     // ============================= TRANSPORT ==================================
     this.play = new components.PlayButton([0x90 + offset, 0x00]); // LED doesn't stay on
     this.cue = new components.CueButton([0x90 + offset, 0x01]);
-    this.sync = new components.SyncButton([0x90 + offset, 0x02]); // doesn't work properly
+    var SyncButton = function (options) {
+        components.SyncButton.call(this, options);
+    };
+
+    SyncButton.prototype = new components.SyncButton({
+        doubleTapTimeout: 500,
+        unshift: function () {
+            this.input = function (channel, control, value, status, group) {
+                if (this.isPress(channel, control, value, status)) {
+                    if (this.isDoubleTap) {
+                        var fileBPM = engine.getValue(this.group, 'file_bpm');
+                        engine.setValue(this.group, 'bpm', fileBPM);
+                    } else if (engine.getValue(this.group, 'sync_enabled') === 0) {
+                        engine.setValue(this.group, 'beatsync', 1);
+                        this.longPressTimer = engine.beginTimer(this.longPressTimeout, function () {
+                            engine.setValue(this.group, 'sync_enabled', 1);
+                            this.longPressTimer = 0;
+                        }, true);
+                        this.isDoubleTap = true; // For the next call.
+                        this.doubleTapTimer = engine.beginTimer(this.doubleTapTimeout, function () {
+                            this.isDoubleTap = false;
+                        }, true);
+                    } else {
+                        engine.setValue(this.group, 'sync_enabled', 0);
+                    };
+                } else {
+                    if (this.longPressTimer !== 0) {
+                        engine.stopTimer(this.longPressTimer);
+                        this.longPressTimer = 0;
+                    };
+                    // Apparently some DJ-202 button LEDS reset themselves when
+                    // a button is released, so we need to re-enable the LED
+                    // again.
+                    if(engine.getValue(group, 'sync_enabled')) {
+                        midi.sendShortMsg(0x90 + offset, 0x02, 0x7f);
+                    }
+                };
+            };
+
+            var ledControl = engine.getValue(this.group, 'sync_enabled') ? 0x02 : 0x03;
+            this.output = function (value, group, control) {
+                // To disable the sync LED, the note must be shifted. This
+                // corresponds to the DJ-202 surface, which has sync off on the
+                // shift layer.
+                midi.sendShortMsg(0x90 + offset, ledControl, 0x7f);
+            };
+            // Pressing shift + sync off on the controller will disable the sync
+            // LED even when sync is still enabled within mixxx.
+            midi.sendShortMsg(0x90 + offset, ledControl, 0x7f);
+        },
+
+    });
+
+    this.sync = new SyncButton();
 
     // =============================== MIXER ====================================
     this.pregain = new components.Pot({
@@ -198,7 +308,24 @@ DJ202.Deck = function (deckNumbers, offset) {
         type: components.Button.prototype.types.toggle,
         inKey: 'pfl',
         outKey: 'pfl',
-        // missing: shift -> TAP
+    });
+
+    this.tapBPM = new components.Button({
+        input: function (channel, control, value, status, group) {
+        if (value == 127) {
+                script.triggerControl(group, 'beats_translate_curpos');
+                bpm.tapButton(script.deckFromGroup(group));
+                this.longPressTimer = engine.beginTimer(
+                    this.longPressTimeout,
+                    function () {
+                        script.triggerControl(group, 'beats_translate_match_alignment');
+                    },
+                    true
+                );
+            } else {
+                engine.stopTimer(this.longPressTimer);
+        }
+        }
     });
 
     this.volume = new components.Pot({
@@ -226,6 +353,20 @@ DJ202.EffectUnit = function (unitNumber) {
     this.group = '[EffectRack1_EffectUnit' + unitNumber + ']';
     engine.setValue(this.group, 'show_focus', 1);
 
+    this.shift = function () {
+        this.button.forEach(function (button) {
+            button.shift();
+        });
+        this.knob.shift();
+    };
+
+    this.unshift = function () {
+        this.button.forEach(function (button) {
+            button.unshift();
+        });
+        this.knob.unshift();
+    };
+
     this.EffectButton = function (buttonNumber) {
         this.buttonNumber = buttonNumber;
 
@@ -235,33 +376,41 @@ DJ202.EffectUnit = function (unitNumber) {
         components.Button.call(this);
     };
     this.EffectButton.prototype = new components.Button({
-        input: function (channel, control, value, status) {
-            if (this.isPress(channel, control, value, status)) {
-                this.isLongPressed = false;
-                this.longPressTimer = engine.beginTimer(this.longPressTimeout, function () {
-                    var effectGroup = '[EffectRack1_EffectUnit' + unitNumber + '_Effect' + this.buttonNumber + ']';
-                    script.toggleControl(effectGroup, 'enabled');
-                    this.isLongPressed = true;
-                }, true);
-            } else {
-                if (!this.isLongPressed) {
-                    var focusedEffect = engine.getValue(eu.group, 'focused_effect');
-                    if (focusedEffect === this.buttonNumber) {
-                        engine.setValue(eu.group, 'focused_effect', 0);
-                    } else {
-                        engine.setValue(eu.group, 'focused_effect', this.buttonNumber);
+        unshift: function() {
+            this.input = function (channel, control, value, status) {
+                if (this.isPress(channel, control, value, status)) {
+                    this.isLongPressed = false;
+                    this.longPressTimer = engine.beginTimer(this.longPressTimeout, function () {
+                        var effectGroup = '[EffectRack1_EffectUnit' + unitNumber + '_Effect' + this.buttonNumber + ']';
+                        script.toggleControl(effectGroup, 'enabled');
+                        this.isLongPressed = true;
+                    }, true);
+                } else {
+                    if (!this.isLongPressed) {
+                        var focusedEffect = engine.getValue(eu.group, 'focused_effect');
+                        if (focusedEffect === this.buttonNumber) {
+                            engine.setValue(eu.group, 'focused_effect', 0);
+                        } else {
+                            engine.setValue(eu.group, 'focused_effect', this.buttonNumber);
+                        }
                     }
+                    this.isLongPressed = false;
+                    engine.stopTimer(this.longPressTimer);
                 }
-                this.isLongPressed = false;
-                engine.stopTimer(this.longPressTimer);
             }
+            this.outKey = 'focused_effect';
+            this.output = function (value, group, control) {
+                this.send((value === this.buttonNumber) ? this.on : this.off);
+            };
+            this.sendShifted = true;
+            this.shiftOffset = 0x0B;
         },
-        outKey: 'focused_effect',
-        output: function (value, group, control) {
-            this.send((value === this.buttonNumber) ? this.on : this.off);
-        },
-        sendShifted: true,
-        shiftOffset: 0x0B,
+        shift: function () {
+            this.input = function (channel, control, value, status) {
+                var group = '[EffectRack1_EffectUnit' + unitNumber + '_Effect' + this.buttonNumber + ']';
+                script.toggleControl(group, 'next_effect');
+            };
+        }
     });
 
     this.button = [];
@@ -272,6 +421,23 @@ DJ202.EffectUnit = function (unitNumber) {
         engine.softTakeover(effectGroup, 'meta', true);
         engine.softTakeover(eu.group, 'mix', true);
     }
+
+    this.headphones = new components.Button({
+        group: '[EffectRack1_EffectUnit' + unitNumber + ']',
+        midi: [0x98, 0x04],
+        unshift: function() {
+            this.outKey = 'group_[Headphone]_enable';
+            this.inKey = this.outKey;
+            this.input = function (channel, control, value, status) {
+                // FIXME Trigger *after* release, to work-around the device
+                // disabling the LED on release. Refactor this once a customized
+                // ‘Button’ class is available.
+                if (!value) {
+                    script.toggleControl(this.group, this.outKey);
+                };
+            };
+        }
+    });
 
     this.knob = new components.Pot({
         unshift: function () {
@@ -287,6 +453,12 @@ DJ202.EffectUnit = function (unitNumber) {
                 }
             };
         },
+        shift: function() {
+            this.input = function (channel, control, value, status) {
+                var group = '[EffectRack1_EffectUnit' + unitNumber + ']';
+                engine.setParameter(group, 'super1', value / 0x7f);
+            }
+        }
     });
 
     this.knobSoftTakeoverHandler = engine.makeConnection(eu.group, 'focused_effect', function (value, group, control) {

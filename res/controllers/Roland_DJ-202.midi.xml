@@ -15,7 +15,7 @@
         <controls>
             <control>
                 <group>[Channel1]</group>
-                <key>DJ202.leftDeck.shiftButton</key>
+                <key>DJ202.shiftButton</key>
                 <status>0x9F</status>
                 <midino>0x00</midino>
                 <options>
@@ -528,6 +528,15 @@
                     <script-binding/>
                 </options>
             </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>DJ202.effectUnit[1].headphones.input</key>
+                <status>0x98</status>
+                <midino>0x04</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
             <!-- jog wheels -->
             <control>
                 <group>[Channel1]</group>
@@ -545,6 +554,15 @@
                 <midino>0x06</midino>
                 <options>
                     <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>slip_enabled</key>
+                <status>0x90</status>
+                <midino>0x07</midino>
+                <options>
+                    <switch/>
                 </options>
             </control>
             <!-- mixer -->
@@ -604,6 +622,69 @@
             </control>
             <control>
                 <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramDown</key>
+                <status>0x94</status>
+                <midino>0x42</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramDown</key>
+                <status>0x94</status>
+                <midino>0x44</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramDown</key>
+                <status>0x94</status>
+                <midino>0x46</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramUp</key>
+                <status>0x94</status>
+                <midino>0x41</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramUp</key>
+                <status>0x94</status>
+                <midino>0x43</midino>
+                <options>
+                  <script-binding/>
+                </options>
+            </control>
+            <control>
+              <group>[Channel1]</group>
+                <key>DJ202.leftDeck.paramUp</key>
+                <status>0x94</status>
+                <midino>0x45</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+           <control>
+               <group>[Channel1]</group>
+               <key>DJ202.leftDeck.tapBPM.input</key>
+               <status>0x90</status>
+               <midino>0x12</midino>
+               <options>
+                   <script-binding/>
+               </options>
+           </control>
+            <control>
+                <group>[Channel1]</group>
                 <key>DJ202.leftDeck.volume.input</key>
                 <status>0xB0</status>
                 <midino>0x1C</midino>
@@ -630,10 +711,37 @@
                 </options>
             </control>
             <control>
-                <group>[Master]</group>
+                <group>[Library]</group>
                 <key>DJ202.browseEncoder.input</key>
                 <status>0xBF</status>
                 <midino>0x00</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Library]</group>
+                <key>DJ202.browseEncoder.input</key>
+                <status>0xBF</status>
+                <midino>0x01</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Library]</group>
+                <key>DJ202.browseEncoder.input</key>
+                <status>0x9F</status>
+                <midino>0x06</midino>
+                <options>
+                    <script-binding/>
+                </options>
+            </control>
+            <control>
+                <group>[Library]</group>
+                <key>DJ202.browseEncoder.input</key>
+                <status>0x9F</status>
+                <midino>0x07</midino>
                 <options>
                     <script-binding/>
                 </options>
