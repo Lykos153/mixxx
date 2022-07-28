@@ -109,10 +109,10 @@ DJ202.sortLibrary = function(_channel, control, value, _status, _group) {
     var sortColumn;
     switch (control) {
     case 0x12: // SONG
-        sortColumn = 1;
+        sortColumn = 2;
         break;
     case 0x13: // BPM
-        sortColumn = 14;
+        sortColumn = 15;
         break;
     default:
     // unknown sort column
